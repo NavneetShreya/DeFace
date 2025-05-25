@@ -72,8 +72,16 @@ export default function FileUpload() {
       const data = await response.json();
 
       if (response.ok) {
+        // Convert the returned classifications object into an array
+        const classificationsArray = Object.entries(data.classifications).map(
+          ([label, score]) => ({ label, score })
+        );
+
         setMessage({ text: 'File uploaded successfully!', type: 'success' });
-        setResults(data);
+        setResults({
+          ...data,
+          classifications: classificationsArray,
+        });
         setFile(null);
         document.getElementById('file-upload').value = '';
       } else {
@@ -91,9 +99,10 @@ export default function FileUpload() {
       setUploading(false);
     }
   };
-
   const predictedClass =
-    results?.classifications?.[0] ?? null;
+    results?.classifications?.find(
+      (c) => c.label === results.prediction
+    ) ?? null;
 
   const topTwoClasses = results?.classifications?.slice(0, 2) ?? [];
 
@@ -138,9 +147,7 @@ export default function FileUpload() {
             type="file"
             accept="image/*"
             onChange={handleFileChange}
-            className="w-full px-3 sm:px-4 py-2 bg-white/30 border border-white/30 rounded-md text-sm sm:text-base text-white 
-            file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm sm:file:text-base file:text-white 
-            file:bg-[#4F1C51] hover:file:hover:bg-[#210F37] file:transition-colors"
+            className="w-full px-3 sm:px-4 py-2 bg-white/30 border border-white/30 rounded-md text-sm sm:text-base text-white file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm sm:file:text-base file:text-white file:bg-[#4F1C51] hover:file:hover:bg-[#210F37] file:transition-colors"
           />
         </div>
 
@@ -153,19 +160,17 @@ export default function FileUpload() {
         <button
           type="submit"
           disabled={uploading || !file}
-          className="w-full sm:w-auto px-6 py-2 sm:py-3 bg-[#4F1C51] text-white text-sm sm:text-base rounded-md 
-          focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 
-          disabled:opacity-50 enabled:hover:bg-[#210F37] transition-colors"
+          className="w-full sm:w-auto px-6 py-2 sm:py-3 bg-[#4F1C51] text-white text-sm sm:text-base rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 enabled:hover:bg-[#210F37] transition-colors"
         >
           {uploading ? 'Analysing...' : 'Analyse Image'}
         </button>
       </form>
 
-      {/* === Results Section === */}
+      {/* Results Section */}
       {(results?.classifications?.length > 0 || imagePreview) && (
         <div className="mt-12 w-full">
           <div className="flex flex-col lg:flex-row gap-10">
-            {/* === Uploaded Image === */}
+            {/* Uploaded Image */}
             <div className="lg:w-1/2">
               <h3 className="text-white text-xl font-semibold mb-4">
                 {results ? 'Analysis Results' : 'Selected Image'}
@@ -191,7 +196,7 @@ export default function FileUpload() {
               )}
             </div>
 
-            {/* === Classification Results === */}
+            {/* Classification Results */}
             {results?.classifications?.length > 0 && (
               <div className="lg:w-1/2">
                 <h3 className="text-white text-xl font-semibold mb-4">
@@ -206,7 +211,7 @@ export default function FileUpload() {
                           <div
                             className="bg-blue-500 h-4 rounded-full"
                             style={{ width: `${(result.score * 100).toFixed(1)}%` }}
-                          ></div>
+                          />
                         </div>
                         <div className="w-16 text-white text-right">
                           {(result.score * 100).toFixed(1)}%
@@ -219,17 +224,15 @@ export default function FileUpload() {
                   <div className="space-y-3 border-t border-gray-600 pt-6">
                     <p className="text-green-400 text-lg">
                       <strong>Most Likely Class:</strong>{' '}
-                      {predictedClass.label} ({(predictedClass.score * 100).toFixed(2)}%)
+                      {predictedClass?.label} ({(predictedClass?.score * 100).toFixed(2)}%)
                     </p>
                     {topTwoClasses[1] && (
                       <p className="text-white text-base">
-                        <strong>Top 2:</strong> {topTwoClasses[0].label},{' '}
-                        {topTwoClasses[1].label}
+                        <strong>Top 2:</strong> {topTwoClasses[0].label}, {topTwoClasses[1].label}
                       </p>
                     )}
                     <p className="text-green-400 text-lg">
-                      <strong>Confidence Margin:</strong>{' '}
-                      {confidenceMargin.toFixed(2)}%
+                      <strong>Confidence Margin:</strong> {confidenceMargin.toFixed(2)}%
                     </p>
                   </div>
                 </div>
@@ -237,17 +240,14 @@ export default function FileUpload() {
             )}
           </div>
 
-          {/* === Full Width Chart === */}
+          {/* Full Width Chart */}
           <div className="mt-12">
             <h3 className="text-white text-2xl font-semibold mb-4">
               Confidence Score Distribution
             </h3>
             <div className="bg-transparent w-full h-[300px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={chartData}
-                  margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                >
+                <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#555" />
                   <XAxis dataKey="name" stroke="#ccc" />
                   <YAxis
@@ -271,6 +271,3 @@ export default function FileUpload() {
     </div>
   );
 }
-
-
-

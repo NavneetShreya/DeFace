@@ -1,113 +1,84 @@
 import dbConnect from '@/lib/db';
 import File from '@/models/File';
-import { getServerSession } from 'next-auth/next';
-import { authOptions } from '@/app/api/auth/[...nextauth]/route';
-import axios from 'axios';
+import { NextResponse } from 'next/server';
 import jwt from 'jsonwebtoken';
+import FormData from 'form-data';
+import axios from 'axios';
 
 export const config = {
   api: {
-    bodyParser: false,
+    bodyParser: false, // required for streaming file uploads
   },
 };
-
-async function callHuggingFaceAPI(apiUrl, data, headers, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const response = await axios.post(apiUrl, data, { headers });
-      return response.data;
-    } catch (error) {
-      const status = error.response?.status;
-      if (i === retries - 1 || status !== 503) {
-        throw error; 
-      }
-      console.warn(`Retrying... (${i + 1}/${retries}) due to status code ${status}`);
-      
-      await new Promise((resolve) => setTimeout(resolve, Math.pow(2, i) * 1000));
-    }
-  }
-}
-
 
 export async function POST(request) {
   await dbConnect();
 
   try {
-    
+    // --- 1. Extract & verify JWT from cookie ---
     const cookieHeader = request.headers.get('cookie') || '';
-    const token =
-      cookieHeader
-        .split('; ')
-        .find((row) => row.startsWith('token='))?.split('=')[1] || null;
+    const token = cookieHeader
+      .split('; ')
+      .find((c) => c.startsWith('token='))
+      ?.split('=')[1];
 
     if (!token) {
-      return new Response(
-        JSON.stringify({ success: false, message: 'Not authorized' }),
-        {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        }
+      return NextResponse.json(
+        { success: false, message: 'Not authorized' },
+        { status: 401 }
       );
     }
 
-    // Verify the token using your JWT secret
     let decoded;
     try {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-    } catch (error) {
-      return new Response(
-        JSON.stringify({ success: false, message: 'Invalid token' }),
-        {
-          status: 401,
-          headers: { 'Content-Type': 'application/json' },
-        }
+    } catch {
+      return NextResponse.json(
+        { success: false, message: 'Invalid token' },
+        { status: 401 }
       );
     }
 
-    
-    const data = await request.formData();
-    const file = data.get('file');
+    // --- 2. Parse the incoming multipart/form-data ---
+    const formData = await request.formData();
+    const file = formData.get('file');
 
-    if (!file) {
-      return new Response(
-        JSON.stringify({ success: false, message: 'No file uploaded' }),
-        {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        }
+    if (!file || typeof file === 'string') {
+      return NextResponse.json(
+        { success: false, message: 'No file uploaded' },
+        { status: 400 }
       );
     }
 
-    
+    // Read file into a Buffer
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const base64Image = buffer.toString('base64');
 
-    
-    const apiUrl =
-      'https://api-inference.huggingface.co/models/prithivMLmods/AI-vs-Deepfake-vs-Real';
-    const hfHeaders = {
-      Authorization: `Bearer ${process.env.HF_API_TOKEN}`,
-      'Content-Type': 'application/json',
-    };
-    const bodyData = { inputs: base64Image };
-
-    const responseData = await callHuggingFaceAPI(apiUrl, bodyData, hfHeaders);
-
-    // Sort the results by confidence (score) in descending order
-    const classifications = responseData.sort((a, b) => b.score - a.score);
-
-    // Store file metadata in the database using user details from the token
-    const newFile = await File.create({
+    // --- 3. Re-package using server-side FormData & send to FastAPI ---
+    const upstream = new FormData();
+    upstream.append('file', buffer, {
       filename: file.name,
-      path: `/uploads/${file.name}`, // Update this as needed
-      size: file.size,
-      mimetype: file.type,
-      user: decoded.id, // assumes your payload has an "id" property
+      contentType: file.type,
     });
 
-    return new Response(
-      JSON.stringify({
+    const apiRes = await axios.post('http://localhost:8000/predict/', upstream, {
+      headers: upstream.getHeaders(),
+    });
+
+    const { prediction, class_probabilities } = apiRes.data;
+
+    // --- 4. Save metadata in MongoDB ---
+    const newFile = await File.create({
+      filename: file.name,
+      path: `/uploads/${file.name}`,  // adjust if you’re actually saving to disk/S3/etc
+      size: file.size,
+      mimetype: file.type,
+      user: decoded.id,
+    });
+
+    // --- 5. Return combined response ---
+    return NextResponse.json(
+      {
         success: true,
         file: {
           id: newFile._id,
@@ -115,24 +86,16 @@ export async function POST(request) {
           size: newFile.size,
           uploadedAt: newFile.uploadedAt,
         },
-        classifications, 
-      }),
-      {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' },
-      }
+        prediction,
+        classifications: class_probabilities,
+      },
+      { status: 201 }
     );
-  } catch (error) {
-    console.error('Error processing request:', error);
-    return new Response(
-      JSON.stringify({
-        success: false,
-        message: 'Error processing request',
-      }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      }
+  } catch (err) {
+    console.error(err);
+    return NextResponse.json(
+      { success: false, message: 'Error processing request' },
+      { status: 500 }
     );
   }
 }
